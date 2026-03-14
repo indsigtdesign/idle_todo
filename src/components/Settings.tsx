@@ -3,6 +3,7 @@ import {
 	useGameStore,
 	upgradeCost,
 	upgradeMaxLevel,
+	isUpgradeVisible,
 	ALL_HABITS,
 	getHabitEffectSummary,
 } from '../store';
@@ -27,12 +28,6 @@ const UPGRADE_META: {
 		desc: 'Chance to spawn multiple tasks',
 	},
 	{
-		id: 'taskVariety',
-		label: 'Task Variety',
-		tree: 'Generation',
-		desc: 'Unlocks new interaction types',
-	},
-	{
 		id: 'autoGenerate',
 		label: 'Auto Generate',
 		tree: 'Generation',
@@ -49,12 +44,6 @@ const UPGRADE_META: {
 		label: 'Hold Reduction',
 		tree: 'Completion',
 		desc: 'Shortens long-click hold time',
-	},
-	{
-		id: 'autoComplete',
-		label: 'Auto Complete',
-		tree: 'Completion',
-		desc: 'Automatically completes tasks',
 	},
 	{
 		id: 'chainBonus',
@@ -82,7 +71,31 @@ export default function Settings() {
 					Specialisations
 				</h2>
 				<div className="space-y-2">
+					{/*<div className="px-4 py-3 bg-white rounded-lg border border-slate-100">
+						<p className="text-sm font-medium text-slate-800">
+							Task Variety
+						</p>
+						<p className="text-xs text-slate-500 mt-0.5">
+							Unlocked automatically by milestone progress with
+							jitter.
+						</p>
+						<p className="text-xs text-slate-500 mt-0.5 tabular-nums">
+							Level {taskVarietyLevel} / 3
+						</p>
+						<p className="text-xs text-indigo-500 mt-1">
+							{varietyAtMax
+								? 'All interaction types are unlocked.'
+								: `Next unlock around milestone ${taskVarietyNextUnlockMilestone} (current ${milestonesReached})`}
+						</p>
+					</div>*/}
+
 					{UPGRADE_META.map((u) => {
+						const visible = isUpgradeVisible(
+							u.id,
+							upgrades,
+							prestige.habitLevels,
+						);
+						if (!visible) return null;
 						const level = upgrades[u.id];
 						const max = upgradeMaxLevel(u.id);
 						const isMaxed = max !== null && level >= max;
@@ -181,7 +194,7 @@ export default function Settings() {
 			)}
 
 			{/* Info */}
-			<section>
+			{/*<section>
 				<h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-1 mb-3">
 					Settings
 				</h2>
@@ -192,7 +205,7 @@ export default function Settings() {
 						</span>
 					</div>
 				</div>
-			</section>
+			</section>*/}
 
 			<section>
 				<h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-1 mb-3">
@@ -249,8 +262,16 @@ export default function Settings() {
 									together.
 								</li>
 								<li>
+									Task Variety unlocks passively as milestone
+									progress increases.
+								</li>
+								<li>
 									Dopamine milestones start countdowns that
 									become Habit Points.
+								</li>
+								<li>
+									Automation tiers are purchased in Archive
+									using Habit Points.
 								</li>
 								<li>
 									Habit levels are uncapped and each level

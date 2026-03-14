@@ -15,6 +15,9 @@ export interface Task {
 	name: string;
 	interaction: InteractionType;
 	holdProgress: number;
+	isResolving?: boolean;
+	resolveDelayMs?: number;
+	resolvedPayout?: number;
 }
 
 export interface UpgradeLevels {
@@ -42,6 +45,7 @@ export type HabitId =
 	| 'muscleMemory'
 	| 'patience'
 	| 'routine'
+	| 'autoComplete'
 	| 'flowState'
 	| 'hyperfocus'
 	| 'inboxZero'
@@ -66,7 +70,7 @@ export const ALL_HABITS: HabitDef[] = [
 	{
 		id: 'earlyRiser',
 		name: 'Early Riser',
-		description: 'Start each run with stronger momentum',
+		description: 'Keep core speed upgrades after archiving',
 		cost: 1,
 		alwaysUnlocked: true,
 	},
@@ -85,6 +89,13 @@ export const ALL_HABITS: HabitDef[] = [
 		alwaysUnlocked: true,
 	},
 	// Amplifiers
+	{
+		id: 'autoComplete',
+		name: 'Automation',
+		description: 'Auto-complete tiers are bought with Habit Points',
+		cost: 2,
+		alwaysUnlocked: true,
+	},
 	{
 		id: 'flowState',
 		name: 'Flow State',
@@ -117,7 +128,7 @@ export const ALL_HABITS: HabitDef[] = [
 	{
 		id: 'compounding',
 		name: 'Compounding',
-		description: 'Prestige history amplifies all dopamine gain',
+		description: 'Each level doubles all dopamine gain',
 		cost: 3,
 		alwaysUnlocked: false,
 	},
@@ -165,6 +176,7 @@ export interface GameState {
 	isCoolingDown: boolean;
 	upgrades: UpgradeLevels;
 	chain: ChainState;
+	taskVarietyNextUnlockMilestone: number;
 	nextMilestone: number;
 	milestonesReached: number;
 	isPaused: boolean;
@@ -410,16 +422,17 @@ const TASK_NAME_RECENT_AVOID_COUNT = 8;
 
 const BASE_COOLDOWN = 3000;
 const SINGLE_CLICK_DOPAMINE = 1;
-const DOUBLE_CLICK_DOPAMINE = 2;
-const LONG_CLICK_DOPAMINE = 3;
-const DRAG_DOPAMINE = 4;
+const DOUBLE_CLICK_DOPAMINE = 10;
+const LONG_CLICK_DOPAMINE = 25;
+const DRAG_DOPAMINE = 100;
 const LONG_CLICK_HOLD_MS = 2000;
 const DOUBLE_CLICK_WINDOW_MS = 400;
 const CHAIN_WINDOW_MS = 3000;
 const CHAIN_MAX_STACK = 10;
-const MILESTONE_STEP = 50;
+const MILESTONE_STEP = 100;
+const MILESTONE_GROWTH_PER_MILESTONE = 25;
 const HABIT_COUNTDOWN_BASE_MS = 30000;
-const MILESTONE_GROWTH_CAP = 120;
+const MILESTONE_GROWTH_CAP = 300;
 const TASK_VARIETY_MAX = 3;
 const AUTO_COMPLETE_MAX = 3;
 const AUTO_GEN_BASE_INTERVAL = 10000;
@@ -427,6 +440,7 @@ const AUTO_COMPLETE_BASE_INTERVAL = 3000;
 const HOLD_REDUCTION_PER_LEVEL = 150;
 const MIN_HOLD_MS = 400;
 const INBOX_ZERO_BONUS = 10;
+const TASK_VICTORY_DELAY_MS = 250;
 
 // --- Upgrade costs ---
 
@@ -451,12 +465,12 @@ export function upgradeCost(
 	level: number,
 ): number {
 	const expByUpgrade: Record<keyof UpgradeLevels, number> = {
-		spawnRate: 1.11,
-		batchSpawn: 1.12,
+		spawnRate: 1.35,
+		batchSpawn: 1.45,
 		taskVariety: 1.1,
-		autoGenerate: 1.13,
-		clickSpeed: 1.11,
-		holdReduction: 1.11,
+		autoGenerate: 1.6,
+		clickSpeed: 1.45,
+		holdReduction: 1.35,
 		autoComplete: 1.13,
 		chainBonus: 1.12,
 	};
@@ -470,6 +484,29 @@ export function upgradeMaxLevel(upgradeId: keyof UpgradeLevels): number | null {
 	return CAPPED_UPGRADES[upgradeId] ?? null;
 }
 
+export function isUpgradeVisible(
+	upgradeId: keyof UpgradeLevels,
+	currentLevels: UpgradeLevels,
+	habitLevels: Partial<Record<HabitId, number>>,
+): boolean {
+	if ((habitLevels.earlyRiser ?? 0) >= 3) return true;
+
+	switch (upgradeId) {
+		case 'batchSpawn':
+			return currentLevels.spawnRate >= 5;
+		case 'autoGenerate':
+			return currentLevels.batchSpawn >= 3;
+		case 'clickSpeed':
+			return currentLevels.holdReduction >= 3;
+		case 'autoComplete':
+			return currentLevels.clickSpeed >= 5;
+		case 'chainBonus':
+			return currentLevels.taskVariety >= 1;
+		default:
+			return true;
+	}
+}
+
 // --- Persistence ---
 
 const STORAGE_KEY = 'idle-todo-save';
@@ -479,6 +516,7 @@ interface SaveData {
 	tasks: Task[];
 	nextTaskId: number;
 	upgrades: UpgradeLevels;
+	taskVarietyNextUnlockMilestone?: number;
 	nextMilestone: number;
 	milestonesReached: number;
 	tasksCompletedThisRun: number;
@@ -509,6 +547,7 @@ function saveState(state: GameState) {
 		tasks: state.tasks,
 		nextTaskId: state.nextTaskId,
 		upgrades: state.upgrades,
+		taskVarietyNextUnlockMilestone: state.taskVarietyNextUnlockMilestone,
 		nextMilestone: state.nextMilestone,
 		milestonesReached: state.milestonesReached,
 		tasksCompletedThisRun: state.tasksCompletedThisRun,
@@ -572,6 +611,10 @@ export function getHabitUpgradeCost(
 	def: HabitDef,
 	currentLevel: number,
 ): number {
+	if (def.id === 'autoComplete') {
+		const autoCompleteCosts = [2, 4, 8];
+		return autoCompleteCosts[currentLevel] ?? Number.MAX_SAFE_INTEGER;
+	}
 	return def.cost * (currentLevel + 1);
 }
 
@@ -584,27 +627,21 @@ function formatMs(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function effectivePrestigeForCompounding(prestigeCount: number): number {
-	return Math.min(prestigeCount, 10) + Math.max(0, prestigeCount - 10) * 0.25;
-}
-
 export function getHabitEffectSummary(
 	habitId: HabitId,
 	level: number,
-	prestigeCount: number,
+	_prestigeCount: number,
 ): HabitEffectSummary {
 	const nextLevel = level + 1;
 
 	switch (habitId) {
 		case 'earlyRiser': {
-			const currentStart = level > 0 ? level + 1 : 0;
-			const nextStart = nextLevel + 1;
+			const keepsCoreLevels = level > 0;
 			return {
-				current:
-					currentStart > 0
-						? `Current: Start each run at Spawn Rate Lv ${currentStart}`
-						: 'Current: No starting Spawn Rate bonus',
-				next: `Next: Start each run at Spawn Rate Lv ${nextStart}`,
+				current: keepsCoreLevels
+					? 'Current: Keep first 3 levels of Spawn Rate, Batch Spawn, Auto Generate, and Hold Reduction after Archive'
+					: 'Current: No retained speed levels after Archive',
+				next: 'Next: Keep first 3 levels of Spawn Rate, Batch Spawn, Auto Generate, and Hold Reduction after Archive',
 			};
 		}
 		case 'muscleMemory':
@@ -630,6 +667,21 @@ export function getHabitEffectSummary(
 				next: `Next: Base generate cooldown ${formatMs(nextMs)} (${formatPercent(nextReduction)} faster)`,
 			};
 		}
+		case 'autoComplete': {
+			const labels = [
+				'No automation',
+				'Single-click auto',
+				'Single + Double auto',
+				'All interaction auto',
+			];
+			return {
+				current: `Current: ${labels[Math.min(level, 3)]}`,
+				next:
+					nextLevel <= 3
+						? `Next: ${labels[nextLevel]}`
+						: 'Next: Automation is maxed',
+			};
+		}
 		case 'flowState':
 			return {
 				current:
@@ -642,9 +694,9 @@ export function getHabitEffectSummary(
 			return {
 				current:
 					level > 0
-						? `Current: Long Click payouts x${1 + level}`
-						: 'Current: No Long Click payout multiplier',
-				next: `Next: Long Click payouts x${1 + nextLevel}`,
+						? `Current: All interaction payouts x${Math.pow(2, level)}`
+						: 'Current: No interaction payout multiplier',
+				next: `Next: All interaction payouts x${Math.pow(2, nextLevel)}`,
 			};
 		case 'inboxZero':
 			return {
@@ -674,16 +726,14 @@ export function getHabitEffectSummary(
 			};
 		}
 		case 'compounding': {
-			const effectivePrestige =
-				effectivePrestigeForCompounding(prestigeCount);
-			const currentMult = 1 + 0.05 * level * effectivePrestige;
-			const nextMult = 1 + 0.05 * nextLevel * effectivePrestige;
+			const currentMult = Math.pow(2, level);
+			const nextMult = Math.pow(2, nextLevel);
 			return {
 				current:
 					level > 0
-						? `Current: All dopamine x${currentMult.toFixed(2)} at ${effectivePrestige.toFixed(2)} effective prestiges`
-						: `Current: No prestige-based dopamine multiplier (${effectivePrestige.toFixed(2)} effective prestiges)`,
-				next: `Next: All dopamine x${nextMult.toFixed(2)} at ${effectivePrestige.toFixed(2)} effective prestiges`,
+						? `Current: All dopamine x${currentMult.toFixed(2)}`
+						: 'Current: No global dopamine multiplier',
+				next: `Next: All dopamine x${nextMult.toFixed(2)}`,
 			};
 		}
 		case 'journaling':
@@ -704,7 +754,10 @@ function getStartingUpgrades(prestige: PrestigeData): UpgradeLevels {
 	const ups = { ...defaultUpgrades };
 	const erl = habitLevel(prestige, 'earlyRiser');
 	if (erl > 0) {
-		ups.spawnRate = 1 + erl;
+		ups.spawnRate = Math.max(ups.spawnRate, 3);
+		ups.batchSpawn = Math.max(ups.batchSpawn, 3);
+		ups.autoGenerate = Math.max(ups.autoGenerate, 3);
+		ups.holdReduction = Math.max(ups.holdReduction, 3);
 	}
 	return ups;
 }
@@ -750,6 +803,7 @@ export function getAutoCompleteInterval(clickSpeedLevel: number): number {
 
 function getInitialState(): GameState {
 	const saved = loadState();
+	const isFreshProfile = !saved;
 	const prestige = saved?.prestige
 		? { ...defaultPrestige, ...saved.prestige }
 		: defaultPrestige;
@@ -769,16 +823,44 @@ function getInitialState(): GameState {
 	if (!prestige.habitLevels) {
 		prestige.habitLevels = {};
 	}
+	if (
+		(prestige.habitLevels.autoComplete ?? 0) === 0 &&
+		(saved?.upgrades?.autoComplete ?? 0) > 0
+	) {
+		prestige.habitLevels.autoComplete = Math.min(
+			saved?.upgrades?.autoComplete ?? 0,
+			3,
+		);
+	}
 	if (!prestige.lifetimeInteractionCounts) {
 		prestige.lifetimeInteractionCounts = { ...defaultInteractionCounts };
 	}
 	const ups = saved?.upgrades
-		? { ...defaultUpgrades, ...saved.upgrades }
+		? { ...defaultUpgrades, ...saved.upgrades, autoComplete: 0 }
 		: getStartingUpgrades(prestige);
-	const tasks = (saved?.tasks ?? []).map((t) => ({
-		...t,
-		holdProgress: t.holdProgress ?? 0,
+	const initialTaskVarietyNextUnlockMilestone =
+		ups.taskVariety >= TASK_VARIETY_MAX
+			? Number.MAX_SAFE_INTEGER
+			: (saved?.taskVarietyNextUnlockMilestone ??
+				nextTaskVarietyUnlockMilestone(
+					saved?.milestonesReached ?? 0,
+					ups.taskVariety,
+				));
+	const starterTasks: Task[] = STARTER_TASKS.map((task, idx) => ({
+		id: `task-${idx + 1}`,
+		name: task.name,
+		interaction: task.interaction,
+		holdProgress: 0,
 	}));
+	const tasks = (saved?.tasks ?? (isFreshProfile ? starterTasks : [])).map(
+		(t) => ({
+			...t,
+			holdProgress: t.holdProgress ?? 0,
+			isResolving: t.isResolving ?? false,
+			resolveDelayMs: t.resolveDelayMs ?? 0,
+			resolvedPayout: t.resolvedPayout ?? 0,
+		}),
+	);
 	if (
 		!prestige.inboxGuideDismissed &&
 		((saved?.nextTaskId ?? 1) > 1 ||
@@ -791,11 +873,14 @@ function getInitialState(): GameState {
 	return {
 		dopamine: saved?.dopamine ?? 0,
 		tasks,
-		nextTaskId: saved?.nextTaskId ?? 1,
+		nextTaskId:
+			saved?.nextTaskId ??
+			(isFreshProfile ? STARTER_TASKS.length + 1 : 1),
 		cooldownRemaining: 0,
 		cooldownDuration: getEffectiveCooldown(ups.spawnRate, prestige),
 		isCoolingDown: false,
 		upgrades: ups,
+		taskVarietyNextUnlockMilestone: initialTaskVarietyNextUnlockMilestone,
 		chain: { count: 0, timeLeft: 0 },
 		nextMilestone: saved?.nextMilestone ?? MILESTONE_STEP,
 		milestonesReached: saved?.milestonesReached ?? 0,
@@ -847,9 +932,8 @@ function pickInteraction(taskVarietyLevel: number): InteractionType {
 	if (taskVarietyLevel === 0) {
 		return Math.random() < 0.6 ? 'single-click' : 'long-click';
 	}
-	const pool: InteractionType[] = ['single-click'];
+	const pool: InteractionType[] = ['single-click', 'long-click'];
 	if (taskVarietyLevel >= 1) pool.push('double-click');
-	if (taskVarietyLevel >= 2) pool.push('long-click');
 	if (taskVarietyLevel >= 3) pool.push('drag');
 	return pool[Math.floor(Math.random() * pool.length)];
 }
@@ -877,9 +961,47 @@ function chainWindow(chainBonusLevel: number): number {
 function compoundingMultiplier(prestige: PrestigeData): number {
 	if (!hasHabit(prestige, 'compounding')) return 1;
 	const level = habitLevel(prestige, 'compounding');
-	const prestiges = prestige.prestigeCount;
-	const effectivePrestige = effectivePrestigeForCompounding(prestiges);
-	return 1 + 0.05 * level * effectivePrestige;
+	return Math.pow(2, level);
+}
+
+function nextMilestoneIncrement(milestonesReached: number): number {
+	return (
+		MILESTONE_STEP +
+		Math.min(
+			milestonesReached * MILESTONE_GROWTH_PER_MILESTONE,
+			MILESTONE_GROWTH_CAP,
+		)
+	);
+}
+
+function nextTaskVarietyUnlockMilestone(
+	currentMilestones: number,
+	currentVarietyLevel: number,
+): number {
+	// Front-load first unlocks, then widen the gap for later tiers.
+	const minGap = 1 + currentVarietyLevel;
+	const maxGap = 2 + currentVarietyLevel * 2;
+	const gap = Math.floor(Math.random() * (maxGap - minGap + 1)) + minGap;
+	return currentMilestones + gap;
+}
+
+function applyTaskVarietyUnlocks(
+	currentLevel: number,
+	milestonesReached: number,
+	nextUnlockMilestone: number,
+): { level: number; nextUnlockMilestone: number } {
+	let level = currentLevel;
+	let unlockMilestone = nextUnlockMilestone;
+
+	while (level < TASK_VARIETY_MAX && milestonesReached >= unlockMilestone) {
+		level += 1;
+		unlockMilestone =
+			level >= TASK_VARIETY_MAX
+				? Number.MAX_SAFE_INTEGER
+				: nextTaskVarietyUnlockMilestone(unlockMilestone, level);
+	}
+
+	return { level, nextUnlockMilestone: unlockMilestone };
 }
 
 function getBasePayout(interaction: InteractionType): number {
@@ -908,13 +1030,14 @@ function selectMiddleTask(
 	types: InteractionType[],
 	visibleRange?: { startIdx: number; endIdx: number },
 ): Task | undefined {
-	if (tasks.length === 0) return undefined;
+	const activeTasks = tasks.filter((task) => !task.isResolving);
+	if (activeTasks.length === 0) return undefined;
 
 	// If we have viewport info, focus on visible tasks
 	if (visibleRange && visibleRange.endIdx > visibleRange.startIdx) {
 		const visibleStart = Math.max(0, visibleRange.startIdx);
-		const visibleEnd = Math.min(tasks.length, visibleRange.endIdx);
-		const visibleTasks = tasks.slice(visibleStart, visibleEnd);
+		const visibleEnd = Math.min(activeTasks.length, visibleRange.endIdx);
+		const visibleTasks = activeTasks.slice(visibleStart, visibleEnd);
 
 		if (visibleTasks.length > 0) {
 			// Pick from the middle of the visible tasks
@@ -939,19 +1062,25 @@ function selectMiddleTask(
 	}
 
 	// Fallback if no viewport info: use entire list
-	const middleIndex = Math.floor(tasks.length / 2);
-	const searchRadius = Math.ceil(tasks.length / 4);
+	const middleIndex = Math.floor(activeTasks.length / 2);
+	const searchRadius = Math.ceil(activeTasks.length / 4);
 	const startIdx = Math.max(0, middleIndex - searchRadius);
-	const endIdx = Math.min(tasks.length, middleIndex + searchRadius + 1);
+	const endIdx = Math.min(activeTasks.length, middleIndex + searchRadius + 1);
 
 	for (let i = startIdx; i < endIdx; i++) {
-		if (types.includes(tasks[i].interaction)) {
-			return tasks[i];
+		if (types.includes(activeTasks[i].interaction)) {
+			return activeTasks[i];
 		}
 	}
 
-	return tasks.find((t) => types.includes(t.interaction));
+	return activeTasks.find((t) => types.includes(t.interaction));
 }
+
+const STARTER_TASKS: Array<Pick<Task, 'name' | 'interaction'>> = [
+	{ name: 'Enjoy some dopamine', interaction: 'single-click' },
+	{ name: 'Decide to add a new task', interaction: 'single-click' },
+	{ name: 'Master the long-press', interaction: 'long-click' },
+];
 
 function computeUnlocks(state: GameState): HabitId[] {
 	const unlocked = new Set<HabitId>(state.prestige.unlockedHabits);
@@ -1027,6 +1156,7 @@ export const useGameStore = create<GameState & GameActions>()(
 
 			const task = state.tasks.find((t) => t.id === taskId);
 			if (!task) return;
+			if (task.isResolving) return;
 
 			const effectiveHold = getEffectiveHoldMs(
 				state.upgrades.holdReduction,
@@ -1039,11 +1169,8 @@ export const useGameStore = create<GameState & GameActions>()(
 
 			let pay = getBasePayout(task.interaction);
 
-			if (
-				task.interaction === 'long-click' &&
-				hasHabit(state.prestige, 'hyperfocus')
-			) {
-				pay *= 1 + habitLevel(state.prestige, 'hyperfocus');
+			if (hasHabit(state.prestige, 'hyperfocus')) {
+				pay *= Math.pow(2, habitLevel(state.prestige, 'hyperfocus'));
 			}
 
 			const newChainCount =
@@ -1061,11 +1188,25 @@ export const useGameStore = create<GameState & GameActions>()(
 
 			pay = Math.floor(pay * compoundingMultiplier(state.prestige));
 
-			const remainingTasks = state.tasks.filter((t) => t.id !== taskId);
+			const remainingActiveTasks = state.tasks.filter(
+				(t) => t.id !== taskId && !t.isResolving,
+			);
+			const resolvingTasks = state.tasks.map((t) =>
+				t.id === taskId
+					? {
+							...t,
+							holdProgress: 0,
+							isResolving: true,
+							resolveDelayMs: TASK_VICTORY_DELAY_MS,
+							resolvedPayout: pay,
+						}
+					: t,
+			);
 			let newDopamine = state.dopamine + pay;
 
 			const justCleared =
-				remainingTasks.length === 0 && state.tasks.length > 0;
+				remainingActiveTasks.length === 0 &&
+				state.tasks.some((t) => !t.isResolving);
 			let cleared = state.queueClearedThisRun;
 			if (justCleared) {
 				cleared = true;
@@ -1087,8 +1228,21 @@ export const useGameStore = create<GameState & GameActions>()(
 					remaining: dur,
 					duration: dur,
 				});
-				nm += MILESTONE_STEP + Math.min(mr * 10, MILESTONE_GROWTH_CAP);
+				nm += nextMilestoneIncrement(mr);
 			}
+
+			const taskVarietyUnlock = applyTaskVarietyUnlocks(
+				state.upgrades.taskVariety,
+				mr,
+				state.taskVarietyNextUnlockMilestone,
+			);
+			const newUpgrades =
+				taskVarietyUnlock.level !== state.upgrades.taskVariety
+					? {
+							...state.upgrades,
+							taskVariety: taskVarietyUnlock.level,
+						}
+					: state.upgrades;
 
 			const isLongClick = task.interaction === 'long-click';
 			const newCounts = { ...state.interactionCountsThisRun };
@@ -1106,8 +1260,11 @@ export const useGameStore = create<GameState & GameActions>()(
 			const newUnlocked = computeUnlocks(nextState);
 
 			set({
-				tasks: remainingTasks,
+				tasks: resolvingTasks,
 				dopamine: newDopamine,
+				upgrades: newUpgrades,
+				taskVarietyNextUnlockMilestone:
+					taskVarietyUnlock.nextUnlockMilestone,
 				chain: {
 					count: newChainCount,
 					timeLeft: chainWindow(state.upgrades.chainBonus),
@@ -1158,6 +1315,17 @@ export const useGameStore = create<GameState & GameActions>()(
 		purchaseUpgrade: (upgradeId: keyof UpgradeLevels) => {
 			const state = get();
 			if (state.isPaused) return;
+			if (
+				!isUpgradeVisible(
+					upgradeId,
+					state.upgrades,
+					state.prestige.habitLevels,
+				)
+			)
+				return;
+			if (upgradeId === 'taskVariety' || upgradeId === 'autoComplete') {
+				return;
+			}
 			const level = state.upgrades[upgradeId];
 
 			const cap = CAPPED_UPGRADES[upgradeId];
@@ -1198,6 +1366,7 @@ export const useGameStore = create<GameState & GameActions>()(
 			const def = ALL_HABITS.find((h) => h.id === habitId);
 			if (!def) return;
 			const currentLevel = habitLevel(state.prestige, habitId);
+			if (habitId === 'autoComplete' && currentLevel >= 3) return;
 			const cost = getHabitUpgradeCost(def, currentLevel);
 			if (state.prestige.habitPoints < cost) return;
 
@@ -1264,6 +1433,10 @@ export const useGameStore = create<GameState & GameActions>()(
 				cooldownDuration: getEffectiveCooldown(ups.spawnRate, prestige),
 				isCoolingDown: false,
 				upgrades: ups,
+				taskVarietyNextUnlockMilestone: nextTaskVarietyUnlockMilestone(
+					0,
+					ups.taskVariety,
+				),
 				chain: { count: 0, timeLeft: 0 },
 				nextMilestone: MILESTONE_STEP,
 				milestonesReached: 0,
@@ -1309,6 +1482,19 @@ export const useGameStore = create<GameState & GameActions>()(
 				} else {
 					updates.chain = { ...state.chain, timeLeft: ct };
 				}
+			}
+
+			// Keep completed tasks visible briefly before removing them.
+			if (state.tasks.some((task) => task.isResolving)) {
+				const currentTasks = updates.tasks ?? state.tasks;
+				updates.tasks = currentTasks
+					.map((task) => {
+						if (!task.isResolving) return task;
+						const remaining = (task.resolveDelayMs ?? 0) - deltaMs;
+						if (remaining <= 0) return null;
+						return { ...task, resolveDelayMs: remaining };
+					})
+					.filter((task): task is Task => task !== null);
 			}
 
 			// Long-click hold progress
@@ -1391,15 +1577,17 @@ export const useGameStore = create<GameState & GameActions>()(
 			}
 
 			// Auto Complete
-			if (state.upgrades.autoComplete > 0) {
+			const autoCompleteLevel = habitLevel(
+				state.prestige,
+				'autoComplete',
+			);
+			if (autoCompleteLevel > 0) {
 				const newTimer =
 					(updates.autoCompleteTimer ?? state.autoCompleteTimer) -
 					deltaMs;
 				if (newTimer <= 0) {
 					const currentTasks = updates.tasks ?? state.tasks;
-					const types = autoCompletableTypes(
-						state.upgrades.autoComplete,
-					);
+					const types = autoCompletableTypes(autoCompleteLevel);
 					const target = selectMiddleTask(
 						currentTasks,
 						types,
@@ -1409,11 +1597,11 @@ export const useGameStore = create<GameState & GameActions>()(
 						playFart(target.interaction);
 						let pay = getBasePayout(target.interaction);
 
-						if (
-							target.interaction === 'long-click' &&
-							hasHabit(state.prestige, 'hyperfocus')
-						) {
-							pay *= 1 + habitLevel(state.prestige, 'hyperfocus');
+						if (hasHabit(state.prestige, 'hyperfocus')) {
+							pay *= Math.pow(
+								2,
+								habitLevel(state.prestige, 'hyperfocus'),
+							);
 						}
 
 						const chainState = updates.chain ?? state.chain;
@@ -1437,15 +1625,27 @@ export const useGameStore = create<GameState & GameActions>()(
 							pay * compoundingMultiplier(state.prestige),
 						);
 
-						const afterTasks = currentTasks.filter(
-							(t) => t.id !== target.id,
+						const afterTasks = currentTasks.map((task) =>
+							task.id === target.id
+								? {
+										...task,
+										holdProgress: 0,
+										isResolving: true,
+										resolveDelayMs: TASK_VICTORY_DELAY_MS,
+										resolvedPayout: pay,
+									}
+								: task,
+						);
+						const remainingActiveTasks = afterTasks.filter(
+							(task) => !task.isResolving,
 						);
 						const prevDopamine =
 							(updates.dopamine as number) ?? state.dopamine;
 						let newDopamine = prevDopamine + pay;
 
 						const justCleared =
-							afterTasks.length === 0 && currentTasks.length > 0;
+							remainingActiveTasks.length === 0 &&
+							currentTasks.some((task) => !task.isResolving);
 						let cleared =
 							(updates.queueClearedThisRun as boolean) ??
 							state.queueClearedThisRun;
@@ -1475,9 +1675,7 @@ export const useGameStore = create<GameState & GameActions>()(
 								remaining: dur,
 								duration: dur,
 							});
-							nm +=
-								MILESTONE_STEP +
-								Math.min(mr * 10, MILESTONE_GROWTH_CAP);
+							nm += nextMilestoneIncrement(mr);
 						}
 
 						const isLong = target.interaction === 'long-click';
@@ -1522,9 +1720,7 @@ export const useGameStore = create<GameState & GameActions>()(
 					);
 					// Compute next target
 					const nextTasks = updates.tasks ?? state.tasks;
-					const nextTypes = autoCompletableTypes(
-						state.upgrades.autoComplete,
-					);
+					const nextTypes = autoCompletableTypes(autoCompleteLevel);
 					const nextTarget = selectMiddleTask(
 						nextTasks,
 						nextTypes,
@@ -1536,9 +1732,8 @@ export const useGameStore = create<GameState & GameActions>()(
 					// Ensure target is set (e.g. after new task generated)
 					if (!state.autoCompleteTargetId) {
 						const curTasks = updates.tasks ?? state.tasks;
-						const curTypes = autoCompletableTypes(
-							state.upgrades.autoComplete,
-						);
+						const curTypes =
+							autoCompletableTypes(autoCompleteLevel);
 						const curTarget = selectMiddleTask(
 							curTasks,
 							curTypes,
@@ -1549,6 +1744,12 @@ export const useGameStore = create<GameState & GameActions>()(
 						}
 					}
 				}
+			} else if (
+				state.autoCompleteTargetId ||
+				state.autoCompleteTimer > 0
+			) {
+				updates.autoCompleteTargetId = null;
+				updates.autoCompleteTimer = 0;
 			}
 
 			// Habit countdowns

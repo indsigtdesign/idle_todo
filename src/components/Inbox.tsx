@@ -103,7 +103,7 @@ export default function Inbox() {
 									</p>
 									<p className="mt-1.5 text-xs text-slate-400">
 										Each task has a badge telling you how to
-										complete it.
+										complete it. Harder badges pay more.
 									</p>
 								</div>
 
@@ -130,7 +130,7 @@ export default function Inbox() {
 
 								<div className="flex items-center justify-between">
 									<p className="text-[11px] text-slate-400">
-										More unlocks as you go.
+										More unlocks appear as milestones stack.
 									</p>
 									<button
 										type="button"
@@ -155,6 +155,8 @@ export default function Inbox() {
 							name={task.name}
 							interaction={task.interaction}
 							holdProgress={task.holdProgress}
+							isResolving={task.isResolving}
+							resolvedPayout={task.resolvedPayout}
 						/>
 					</div>
 				))}

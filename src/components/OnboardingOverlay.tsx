@@ -33,8 +33,9 @@ export default function OnboardingOverlay({
 					<>
 						<p className="mt-2 text-sm text-slate-500">
 							Generate tasks. Complete them the way they ask. Earn
-							dopamine. Spend it on anything that makes this
-							easier.
+							dopamine. Harder interactions pay dramatically more,
+							and interaction variety unlocks itself as milestones
+							stack.
 						</p>
 
 						<div className="mt-3 grid grid-cols-2 gap-2">
@@ -60,12 +61,14 @@ export default function OnboardingOverlay({
 				) : (
 					<>
 						<p className="mt-2 text-sm text-slate-500">
-							Habit Points are spent when you Archive Everything.
+							Archive turns a stalled run into a faster one. Habit
+							Points are your power spikes and automation unlocks.
 						</p>
 
 						<ul className="mt-3 space-y-2 text-sm text-slate-600">
 							<li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-								Archiving resets your run. Your Habits stay.
+								Archiving resets your run. Your Habits and their
+								multipliers stay.
 							</li>
 							<li className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
 								The Archive badge tells you when points are

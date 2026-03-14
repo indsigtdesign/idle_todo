@@ -33,6 +33,7 @@ export default function Archive() {
 	const milestones = useGameStore((s) => s.milestonesReached);
 	const maxChain = useGameStore((s) => s.maxChainThisRun);
 	const interactionCounts = useGameStore((s) => s.interactionCountsThisRun);
+	const habitCountdowns = useGameStore((s) => s.habitCountdowns);
 	const prestige = useGameStore((s) => s.prestige);
 	const prestigeCount = useGameStore((s) => s.prestige.prestigeCount);
 	const purchaseHabit = useGameStore((s) => s.purchaseHabit);
@@ -43,6 +44,38 @@ export default function Archive() {
 	const [prestigeStep, setPrestigeStep] = useState<'confirm' | 'shop'>(
 		'confirm',
 	);
+	const compoundingDef = ALL_HABITS.find(
+		(habit) => habit.id === 'compounding',
+	);
+	const currentCompoundingLevel = prestige.habitLevels.compounding ?? 0;
+	const currentCompoundingMultiplier = Math.pow(2, currentCompoundingLevel);
+	let projectedCompoundingLevel = currentCompoundingLevel;
+	let projectedPoints = prestige.habitPoints;
+	if (compoundingDef) {
+		while (
+			projectedPoints >=
+			getHabitUpgradeCost(compoundingDef, projectedCompoundingLevel)
+		) {
+			projectedPoints -= getHabitUpgradeCost(
+				compoundingDef,
+				projectedCompoundingLevel,
+			);
+			projectedCompoundingLevel += 1;
+		}
+	}
+	const projectedCompoundingMultiplier = Math.pow(
+		2,
+		projectedCompoundingLevel,
+	);
+	const projectedSpeedBoostPct = Math.max(
+		0,
+		Math.round(
+			(projectedCompoundingMultiplier / currentCompoundingMultiplier -
+				1) *
+				100,
+		),
+	);
+	const potentialHabitPoints = prestige.habitPoints;
 
 	const startPrestige = () => {
 		setPrestigeStep('confirm');
@@ -138,6 +171,25 @@ export default function Archive() {
 					Archive Run
 				</h2>
 				<div className="space-y-2">
+					<div className="px-4 py-3 bg-indigo-50 rounded-lg border border-indigo-100">
+						<p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">
+							Potential Power
+						</p>
+						<p className="text-sm font-medium text-indigo-900 mt-1">
+							Archiving now secures +{potentialHabitPoints} Habit
+							Point
+							{potentialHabitPoints === 1 ? '' : 's'} and can
+							speed up your next run by about{' '}
+							{projectedSpeedBoostPct}%.
+						</p>
+						{habitCountdowns.length > 0 && (
+							<p className="text-xs text-indigo-600 mt-1">
+								{habitCountdowns.length} countdown
+								{habitCountdowns.length === 1 ? '' : 's'} still
+								running in this run.
+							</p>
+						)}
+					</div>
 					<div className="px-4 py-3 bg-white rounded-lg border border-slate-100">
 						<p className="text-sm font-medium text-slate-800">
 							Reset this run, keep your Habits

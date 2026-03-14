@@ -13,6 +13,8 @@ interface TaskCardProps {
 	name: string;
 	interaction: InteractionType;
 	holdProgress: number;
+	isResolving?: boolean;
+	resolvedPayout?: number;
 }
 
 const SWIPE_THRESHOLD = 0.6; // 60% of card width
@@ -35,6 +37,8 @@ export default function TaskCard({
 	name,
 	interaction,
 	holdProgress,
+	isResolving = false,
+	resolvedPayout = 0,
 }: TaskCardProps) {
 	const completeTask = useGameStore((s) => s.completeTask);
 	const startHold = useGameStore((s) => s.startHold);
@@ -59,14 +63,16 @@ export default function TaskCard({
 
 	// --- Single click ---
 	const handleClick = useCallback(() => {
+		if (isResolving) return;
 		if (interaction === 'single-click') {
 			playFart('single-click');
 			completeTask(taskId);
 		}
-	}, [interaction, completeTask, taskId]);
+	}, [interaction, completeTask, isResolving, taskId]);
 
 	// --- Double click ---
 	const handleDoubleClick = useCallback(() => {
+		if (isResolving) return;
 		if (interaction !== 'double-click') return;
 		const now = Date.now();
 		if (now - lastTapTime.current <= DOUBLE_CLICK_WINDOW_MS) {
@@ -83,17 +89,19 @@ export default function TaskCard({
 				setFirstTapDone(false);
 			}, DOUBLE_CLICK_WINDOW_MS);
 		}
-	}, [interaction, completeTask, taskId]);
+	}, [interaction, completeTask, isResolving, taskId]);
 
 	// --- Long click ---
 	const handlePointerDown = useCallback(() => {
+		if (isResolving) return;
 		if (interaction === 'long-click') {
 			isHolding.current = true;
 			startHold(taskId);
 		}
-	}, [interaction, startHold, taskId]);
+	}, [interaction, isResolving, startHold, taskId]);
 
 	const handlePointerUp = useCallback(() => {
+		if (isResolving) return;
 		if (interaction === 'long-click' && isHolding.current) {
 			isHolding.current = false;
 			if (holdProgress >= effectiveHold) {
@@ -109,36 +117,41 @@ export default function TaskCard({
 		effectiveHold,
 		completeTask,
 		cancelHold,
+		isResolving,
 		taskId,
 	]);
 
 	const handlePointerLeave = useCallback(() => {
+		if (isResolving) return;
 		if (interaction === 'long-click' && isHolding.current) {
 			isHolding.current = false;
 			cancelHold(taskId);
 		}
-	}, [interaction, cancelHold, taskId]);
+	}, [interaction, isResolving, cancelHold, taskId]);
 
 	// --- Drag / Swipe ---
 	const handleDragPointerDown = useCallback(
 		(e: React.PointerEvent) => {
+			if (isResolving) return;
 			if (interaction !== 'drag') return;
 			dragStartX.current = e.clientX;
 			(e.target as HTMLElement).setPointerCapture(e.pointerId);
 		},
-		[interaction],
+		[interaction, isResolving],
 	);
 
 	const handleDragPointerMove = useCallback(
 		(e: React.PointerEvent) => {
+			if (isResolving) return;
 			if (interaction !== 'drag' || dragStartX.current === null) return;
 			const dx = e.clientX - dragStartX.current;
 			setTranslateX(Math.max(0, dx));
 		},
-		[interaction],
+		[interaction, isResolving],
 	);
 
 	const handleDragPointerUp = useCallback(() => {
+		if (isResolving) return;
 		if (interaction !== 'drag' || dragStartX.current === null) return;
 		dragStartX.current = null;
 		const cardWidth = cardRef.current?.offsetWidth ?? 300;
@@ -147,7 +160,7 @@ export default function TaskCard({
 			completeTask(taskId);
 		}
 		setTranslateX(0);
-	}, [interaction, translateX, completeTask, taskId]);
+	}, [interaction, isResolving, translateX, completeTask, taskId]);
 
 	const isLongClick = interaction === 'long-click';
 	const isDrag = interaction === 'drag';
@@ -169,7 +182,7 @@ export default function TaskCard({
 		: 0;
 
 	// Auto-complete ring
-	const isAutoTarget = autoCompleteTargetId === taskId;
+	const isAutoTarget = autoCompleteTargetId === taskId && !isResolving;
 	const autoInterval = getAutoCompleteInterval(clickSpeedLevel);
 	const autoProgress =
 		isAutoTarget && autoInterval > 0
@@ -178,6 +191,11 @@ export default function TaskCard({
 
 	return (
 		<div className="relative">
+			{isResolving && (
+				<span className="pointer-events-none absolute right-3 -top-2 z-10 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-700 animate-victory-pop">
+					+{resolvedPayout} DONE!
+				</span>
+			)}
 			{/* Swipe reveal layer shown behind card */}
 			{isDrag && (
 				<div
@@ -207,7 +225,7 @@ export default function TaskCard({
 			<div
 				ref={cardRef}
 				style={
-					isDrag
+					isDrag && !isResolving
 						? {
 								transform: `translateX(${translateX}px)`,
 								opacity: 1 - dragFraction * 0.4,
@@ -237,10 +255,14 @@ export default function TaskCard({
 							: undefined
 				}
 				onPointerLeave={isLongClick ? handlePointerLeave : undefined}
-				className={`relative overflow-hidden flex items-center gap-3 px-4 py-3 bg-white rounded-lg shadow-sm border animate-fade-in transition-colors duration-75 ${isDrag ? 'touch-none select-none' : ''} ${isLongClick ? 'touch-none' : 'cursor-pointer'} ${
-					isDrag && dragFraction >= 1
-						? 'border-emerald-400'
-						: 'border-slate-100'
+				className={`relative overflow-hidden flex items-center gap-3 px-4 py-3 rounded-lg shadow-sm border animate-fade-in transition-colors duration-150 ${isDrag ? 'touch-none select-none' : ''} ${isLongClick ? 'touch-none' : isResolving ? 'cursor-default' : 'cursor-pointer'} ${
+					isResolving ? 'bg-[#4ADE80] border-emerald-500' : 'bg-white'
+				} ${
+					isResolving
+						? 'border-emerald-500'
+						: isDrag && dragFraction >= 1
+							? 'border-emerald-400'
+							: 'border-slate-100'
 				}`}
 			>
 				{/* Auto-complete progress bar */}
@@ -295,10 +317,20 @@ export default function TaskCard({
 				) : (
 					<div className="flex-shrink-0 w-5 h-5 rounded border-2 border-slate-300" />
 				)}
-				<span className="text-sm text-slate-700 leading-snug">
+				<span
+					className={`text-sm leading-snug ${
+						isResolving
+							? 'text-emerald-800 font-semibold'
+							: 'text-slate-700'
+					}`}
+				>
 					{name}
 				</span>
-				<span className="ml-auto text-[10px] font-medium text-slate-400 uppercase tracking-wider">
+				<span
+					className={`ml-auto text-[10px] font-medium uppercase tracking-wider ${
+						isResolving ? 'text-emerald-600' : 'text-slate-400'
+					}`}
+				>
 					{badgeLabel(interaction)}
 				</span>
 			</div>
