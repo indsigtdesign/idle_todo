@@ -190,7 +190,7 @@ export interface GameState {
 	interactionCountsThisRun: Record<InteractionType, number>;
 	autoGenTimer: number;
 	autoCompleteTimer: number;
-	autoCompleteTargetId: string | null;
+	autoCompleteTargetIds: string[];
 	pendingScrollToTask: string | null;
 	visibleTaskRange: { startIdx: number; endIdx: number };
 	isPrestiging: boolean;
@@ -489,7 +489,13 @@ export function isUpgradeVisible(
 	currentLevels: UpgradeLevels,
 	habitLevels: Partial<Record<HabitId, number>>,
 ): boolean {
-	if ((habitLevels.earlyRiser ?? 0) >= 3) return true;
+	if ((habitLevels.earlyRiser ?? 0) >= 3) {
+		// Early Riser reveals all upgrades, but autoComplete still needs automation habit
+		if (upgradeId === 'autoComplete') {
+			return (habitLevels.autoComplete ?? 0) >= 1;
+		}
+		return true;
+	}
 
 	switch (upgradeId) {
 		case 'batchSpawn':
@@ -499,7 +505,10 @@ export function isUpgradeVisible(
 		case 'clickSpeed':
 			return currentLevels.holdReduction >= 3;
 		case 'autoComplete':
-			return currentLevels.clickSpeed >= 5;
+			return (
+				currentLevels.clickSpeed >= 5 &&
+				(habitLevels.autoComplete ?? 0) >= 1
+			);
 		case 'chainBonus':
 			return currentLevels.taskVariety >= 1;
 		default:
@@ -898,7 +907,7 @@ function getInitialState(): GameState {
 		},
 		autoGenTimer: 0,
 		autoCompleteTimer: 0,
-		autoCompleteTargetId: null,
+		autoCompleteTargetIds: [],
 		pendingScrollToTask: null,
 		visibleTaskRange: { startIdx: 0, endIdx: 0 },
 		isPrestiging: false,
@@ -1025,55 +1034,76 @@ function autoCompletableTypes(level: number): InteractionType[] {
 	return types;
 }
 
-function selectMiddleTask(
+/** Select up to `count` spread-out targets from the task list. */
+function selectSpreadTargets(
 	tasks: Task[],
 	types: InteractionType[],
+	count: number,
 	visibleRange?: { startIdx: number; endIdx: number },
-): Task | undefined {
+): Task[] {
 	const activeTasks = tasks.filter((task) => !task.isResolving);
-	if (activeTasks.length === 0) return undefined;
+	if (activeTasks.length === 0 || count <= 0) return [];
 
-	// If we have viewport info, focus on visible tasks
+	// Determine the pool to pick from (prefer visible tasks)
+	let pool = activeTasks;
 	if (visibleRange && visibleRange.endIdx > visibleRange.startIdx) {
 		const visibleStart = Math.max(0, visibleRange.startIdx);
 		const visibleEnd = Math.min(activeTasks.length, visibleRange.endIdx);
 		const visibleTasks = activeTasks.slice(visibleStart, visibleEnd);
-
-		if (visibleTasks.length > 0) {
-			// Pick from the middle of the visible tasks
-			const middleIdx = Math.floor(visibleTasks.length / 2);
-			const searchRadius = Math.ceil(visibleTasks.length / 4);
-			const startIdx = Math.max(0, middleIdx - searchRadius);
-			const endIdx = Math.min(
-				visibleTasks.length,
-				middleIdx + searchRadius + 1,
-			);
-
-			// Try to find a matching task in the middle of visible section
-			for (let i = startIdx; i < endIdx; i++) {
-				if (types.includes(visibleTasks[i].interaction)) {
-					return visibleTasks[i];
-				}
-			}
-
-			// Fallback to any matching task in the visible section
-			return visibleTasks.find((t) => types.includes(t.interaction));
-		}
+		if (visibleTasks.length > 0) pool = visibleTasks;
 	}
 
-	// Fallback if no viewport info: use entire list
-	const middleIndex = Math.floor(activeTasks.length / 2);
-	const searchRadius = Math.ceil(activeTasks.length / 4);
-	const startIdx = Math.max(0, middleIndex - searchRadius);
-	const endIdx = Math.min(activeTasks.length, middleIndex + searchRadius + 1);
-
-	for (let i = startIdx; i < endIdx; i++) {
-		if (types.includes(activeTasks[i].interaction)) {
-			return activeTasks[i];
-		}
+	const eligible = pool.filter((t) => types.includes(t.interaction));
+	if (eligible.length === 0) {
+		// Fallback to full list
+		const allEligible = activeTasks.filter((t) =>
+			types.includes(t.interaction),
+		);
+		if (allEligible.length === 0) return [];
+		return allEligible.length <= count
+			? allEligible
+			: spreadPick(allEligible, count);
 	}
 
-	return activeTasks.find((t) => types.includes(t.interaction));
+	if (eligible.length <= count) return eligible;
+
+	// For a single target, pick randomly from the middle half
+	if (count === 1) {
+		const quarter = Math.floor(eligible.length / 4);
+		const lo = Math.max(0, quarter);
+		const hi = Math.min(eligible.length - 1, eligible.length - 1 - quarter);
+		const idx = lo + Math.floor(Math.random() * (hi - lo + 1));
+		return [eligible[idx]];
+	}
+
+	return spreadPick(eligible, count);
+}
+
+function spreadPick(eligible: Task[], count: number): Task[] {
+	const step = eligible.length / count;
+	const jitterRange = Math.floor(step / 2);
+	const result: Task[] = [];
+	const usedIndices = new Set<number>();
+	for (let i = 0; i < count; i++) {
+		const center = Math.floor(step * i + step / 2);
+		let idx = center;
+		if (jitterRange > 0) {
+			idx =
+				center +
+				Math.floor(Math.random() * (jitterRange * 2 + 1)) -
+				jitterRange;
+		}
+		idx = Math.max(0, Math.min(idx, eligible.length - 1));
+		// Avoid duplicates from jitter overlap
+		while (usedIndices.has(idx) && idx < eligible.length - 1) idx++;
+		if (usedIndices.has(idx)) {
+			idx = center;
+			while (usedIndices.has(idx) && idx > 0) idx--;
+		}
+		usedIndices.add(idx);
+		result.push(eligible[idx]);
+	}
+	return result;
 }
 
 const STARTER_TASKS: Array<Pick<Task, 'name' | 'interaction'>> = [
@@ -1081,6 +1111,16 @@ const STARTER_TASKS: Array<Pick<Task, 'name' | 'interaction'>> = [
 	{ name: 'Decide to add a new task', interaction: 'single-click' },
 	{ name: 'Master the long-press', interaction: 'long-click' },
 ];
+
+const FIRST_GENERATED_GUIDE_TASK = 'Spend Dopamine in Settings on an upgrade';
+
+function shouldInjectFirstGeneratedGuideTask(state: GameState): boolean {
+	return (
+		state.prestige.prestigeCount === 0 &&
+		state.nextTaskId === STARTER_TASKS.length + 1 &&
+		state.tasksCompletedThisRun >= STARTER_TASKS.length
+	);
+}
 
 function computeUnlocks(state: GameState): HabitId[] {
 	const unlocked = new Set<HabitId>(state.prestige.unlockedHabits);
@@ -1105,6 +1145,8 @@ export const useGameStore = create<GameState & GameActions>()(
 			if (state.isCoolingDown || state.isPaused) return;
 
 			const count = batchCount(state.upgrades.batchSpawn);
+			const injectFirstGuideTask =
+				shouldInjectFirstGeneratedGuideTask(state);
 			const newTasks: Task[] = [];
 			let id = state.nextTaskId;
 			let previousName = state.tasks[state.tasks.length - 1]?.name;
@@ -1113,7 +1155,10 @@ export const useGameStore = create<GameState & GameActions>()(
 				.map((t) => t.name);
 			let lastTaskId = '';
 			for (let i = 0; i < count; i++) {
-				const name = randomTaskName(previousName, recentNames);
+				const name =
+					injectFirstGuideTask && i === 0
+						? FIRST_GENERATED_GUIDE_TASK
+						: randomTaskName(previousName, recentNames);
 				lastTaskId = `task-${id}`;
 				newTasks.push({
 					id: lastTaskId,
@@ -1323,8 +1368,11 @@ export const useGameStore = create<GameState & GameActions>()(
 				)
 			)
 				return;
-			if (upgradeId === 'taskVariety' || upgradeId === 'autoComplete') {
+			if (upgradeId === 'taskVariety') {
 				return;
+			}
+			if (upgradeId === 'autoComplete') {
+				if (!hasHabit(state.prestige, 'autoComplete')) return;
 			}
 			const level = state.upgrades[upgradeId];
 
@@ -1450,7 +1498,7 @@ export const useGameStore = create<GameState & GameActions>()(
 				interactionCountsThisRun: { ...defaultInteractionCounts },
 				autoGenTimer: 0,
 				autoCompleteTimer: 0,
-				autoCompleteTargetId: null,
+				autoCompleteTargetIds: [],
 				pendingScrollToTask: null,
 				isPrestiging: false,
 				activeOnboarding: 'none',
@@ -1586,14 +1634,24 @@ export const useGameStore = create<GameState & GameActions>()(
 					(updates.autoCompleteTimer ?? state.autoCompleteTimer) -
 					deltaMs;
 				if (newTimer <= 0) {
-					const currentTasks = updates.tasks ?? state.tasks;
+					const completerCount = 1 + state.upgrades.autoComplete;
 					const types = autoCompletableTypes(autoCompleteLevel);
-					const target = selectMiddleTask(
+					const currentTasks = updates.tasks ?? state.tasks;
+					const targets = selectSpreadTargets(
 						currentTasks,
 						types,
+						completerCount,
 						state.visibleTaskRange,
 					);
-					if (target) {
+
+					for (const target of targets) {
+						const latestTasks = updates.tasks ?? state.tasks;
+						// Skip if this task was already resolved by earlier iteration
+						const live = latestTasks.find(
+							(t) => t.id === target.id && !t.isResolving,
+						);
+						if (!live) continue;
+
 						playFart(target.interaction);
 						let pay = getBasePayout(target.interaction);
 
@@ -1625,7 +1683,7 @@ export const useGameStore = create<GameState & GameActions>()(
 							pay * compoundingMultiplier(state.prestige),
 						);
 
-						const afterTasks = currentTasks.map((task) =>
+						const afterTasks = latestTasks.map((task) =>
 							task.id === target.id
 								? {
 										...task,
@@ -1645,7 +1703,7 @@ export const useGameStore = create<GameState & GameActions>()(
 
 						const justCleared =
 							remainingActiveTasks.length === 0 &&
-							currentTasks.some((task) => !task.isResolving);
+							latestTasks.some((task) => !task.isResolving);
 						let cleared =
 							(updates.queueClearedThisRun as boolean) ??
 							state.queueClearedThisRun;
@@ -1718,37 +1776,41 @@ export const useGameStore = create<GameState & GameActions>()(
 					updates.autoCompleteTimer = getAutoCompleteInterval(
 						state.upgrades.clickSpeed,
 					);
-					// Compute next target
+					// Compute next targets for all completers
 					const nextTasks = updates.tasks ?? state.tasks;
 					const nextTypes = autoCompletableTypes(autoCompleteLevel);
-					const nextTarget = selectMiddleTask(
+					updates.autoCompleteTargetIds = selectSpreadTargets(
 						nextTasks,
 						nextTypes,
+						completerCount,
 						state.visibleTaskRange,
-					);
-					updates.autoCompleteTargetId = nextTarget?.id ?? null;
+					).map((t) => t.id);
 				} else {
 					updates.autoCompleteTimer = newTimer;
-					// Ensure target is set (e.g. after new task generated)
-					if (!state.autoCompleteTargetId) {
+					// Ensure targets are set (e.g. after new task generated)
+					if (state.autoCompleteTargetIds.length === 0) {
+						const completerCount = 1 + state.upgrades.autoComplete;
 						const curTasks = updates.tasks ?? state.tasks;
 						const curTypes =
 							autoCompletableTypes(autoCompleteLevel);
-						const curTarget = selectMiddleTask(
+						const spread = selectSpreadTargets(
 							curTasks,
 							curTypes,
+							completerCount,
 							state.visibleTaskRange,
 						);
-						if (curTarget) {
-							updates.autoCompleteTargetId = curTarget.id;
+						if (spread.length > 0) {
+							updates.autoCompleteTargetIds = spread.map(
+								(t) => t.id,
+							);
 						}
 					}
 				}
 			} else if (
-				state.autoCompleteTargetId ||
+				state.autoCompleteTargetIds.length > 0 ||
 				state.autoCompleteTimer > 0
 			) {
-				updates.autoCompleteTargetId = null;
+				updates.autoCompleteTargetIds = [];
 				updates.autoCompleteTimer = 0;
 			}
 

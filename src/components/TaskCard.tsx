@@ -44,7 +44,7 @@ export default function TaskCard({
 	const startHold = useGameStore((s) => s.startHold);
 	const cancelHold = useGameStore((s) => s.cancelHold);
 	const holdReductionLevel = useGameStore((s) => s.upgrades.holdReduction);
-	const autoCompleteTargetId = useGameStore((s) => s.autoCompleteTargetId);
+	const autoCompleteTargetIds = useGameStore((s) => s.autoCompleteTargetIds);
 	const autoCompleteTimer = useGameStore((s) => s.autoCompleteTimer);
 	const clickSpeedLevel = useGameStore((s) => s.upgrades.clickSpeed);
 	const isHolding = useRef(false);
@@ -182,7 +182,7 @@ export default function TaskCard({
 		: 0;
 
 	// Auto-complete ring
-	const isAutoTarget = autoCompleteTargetId === taskId && !isResolving;
+	const isAutoTarget = autoCompleteTargetIds.includes(taskId) && !isResolving;
 	const autoInterval = getAutoCompleteInterval(clickSpeedLevel);
 	const autoProgress =
 		isAutoTarget && autoInterval > 0

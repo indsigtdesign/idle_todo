@@ -88,9 +88,14 @@ export default function Inbox() {
 				{tasks.length === 0 && (
 					<div className="flex items-center justify-center h-full">
 						{prestige.inboxGuideDismissed ? (
-							<p className="text-sm text-slate-400">
-								No tasks. Hit generate to start.
-							</p>
+							<div className="text-sm text-slate-400 text-center space-y-1">
+								<p>Currently no tasks.</p>
+								<p>
+									{' '}
+									Hit <span className="font-bold">+</span> to
+									generate some new ones.
+								</p>
+							</div>
 						) : (
 							<div className="w-full max-w-sm space-y-3">
 								<div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">

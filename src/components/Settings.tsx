@@ -40,6 +40,12 @@ const UPGRADE_META: {
 		desc: 'Speeds up auto-complete interval',
 	},
 	{
+		id: 'autoComplete',
+		label: 'Auto Completers',
+		tree: 'Completion',
+		desc: 'Run additional task completers in parallel',
+	},
+	{
 		id: 'holdReduction',
 		label: 'Hold Reduction',
 		tree: 'Completion',
