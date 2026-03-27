@@ -190,7 +190,9 @@ export default function TaskCard({
 			: 0;
 
 	return (
-		<div className="relative">
+		<div
+			className={`relative ${isDrag ? 'cursor-grab' : 'cursor-pointer'}`}
+		>
 			{isResolving && (
 				<span className="pointer-events-none absolute right-3 -top-2 z-10 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-700 animate-victory-pop">
 					+{resolvedPayout} DONE!
